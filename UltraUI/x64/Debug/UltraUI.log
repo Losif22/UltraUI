@@ -1,2 +1,4 @@
 ﻿  main.cpp
+C:\Users\kaptu\OneDrive\Рабочий стол\projects\UltraUI\UltraUI\main.cpp(141,42): warning C4244: 'argument': conversion from 'double' to 'float', possible loss of data
+C:\Users\kaptu\OneDrive\Рабочий стол\projects\UltraUI\UltraUI\main.cpp(141,34): warning C4244: 'argument': conversion from 'double' to 'float', possible loss of data
   UltraUI.vcxproj -> C:\Users\kaptu\OneDrive\Рабочий стол\projects\UltraUI\x64\Debug\UltraUI.exe

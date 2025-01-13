@@ -1,261 +1,192 @@
-﻿#include <windows.h>
+﻿#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+#include <iostream>
 #include <vector>
-#include <cstdint>
+#include <functional>
 
-// Структура для цвета
-struct Color {
-    uint8_t r, g, b;
+using namespace std;
 
-    Color(uint8_t red, uint8_t green, uint8_t blue) : r(red), g(green), b(blue) {}
+// Константи вікна
+const int WINDOW_WIDTH{ 900 };
+const int WINDOW_HEIGHT{ 600 };
+const char* WINDOW_TITLE{ "UltraUI Window" };
 
-    uint32_t toInt() const {
-        return (r << 16) | (g << 8) | b;
+// Вершинний шейдер
+const char* VertexShaderSource{ R"(
+    #version 330 core
+    layout(location = 0) in vec2 aPos;
+    void main() {
+        gl_Position = vec4(aPos, 0.0, 1.0);
     }
-};
+)" };
 
-// Класс для framebuffer
-class Framebuffer {
+// Фрагментний шейдер
+const char* FragmentShaderSource{ R"(
+    #version 330 core
+    out vec4 FragColor;
+    void main() {
+        FragColor = vec4(0.4, 0.6, 1.0, 1.0);
+    }
+)" };
+
+// 🔧 Функція для компіляції шейдера
+unsigned int compileShader(unsigned int type, const char* source) {
+    unsigned int shader{ glCreateShader(type) };
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+
+    int success{};
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << infoLog << endl;
+    }
+
+    return shader;
+}
+
+// 🔧 Функція для створення шейдерної програми
+unsigned int createShaderProgram(const char* vertexShaderSource, const char* fragmentShaderSource) {
+    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
+    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
+
+    unsigned int shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    int success;
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetProgramInfoLog(shaderProgram, 512, nullptr, infoLog);
+        cerr << "ERROR::PROGRAM::LINKING_FAILED\n" << infoLog << endl;
+    }
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    return shaderProgram;
+}
+
+// 🎨 UI Елемент
+class UIElement {
 public:
-    int width, height;
-    std::vector<uint32_t> buffer;
+    float x, y, width, height;
+    function<void()> onClick;
 
-    Framebuffer(int w, int h) : width(w), height(h), buffer(w* h, 0xFFFFFF) {}
-
-    void resize(int w, int h) {
-        width = w;
-        height = h;
-        buffer.resize(w * h, 0xFFFFFF);
+    UIElement(float x, float y, float width, float height, function<void()> onClick)
+        : x(x), y(y), width(width), height(height), onClick(onClick) {
     }
 
-    void clear(const Color& color) {
-        std::fill(buffer.begin(), buffer.end(), color.toInt());
-    }
-
-    void setPixel(int x, int y, const Color& color) {
-        if (x >= 0 && y >= 0 && x < width && y < height) {
-            buffer[y * width + x] = color.toInt();
-        }
-    }
-
-    void drawRectangle(int x, int y, int w, int h, const Color& color) {
-        for (int i = 0; i < h; ++i) {
-            for (int j = 0; j < w; ++j) {
-                setPixel(x + j, y + i, color);
+    virtual void draw() = 0;
+    virtual void handleMouseClick(float mouseX, float mouseY) {
+        if (mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height) {
+            if (onClick) {
+                onClick();
             }
-        }
-    }
-
-    void drawQuarterCircle(int centerX, int centerY, int radius, const Color& color, int quadrant) {
-        for (int y = 0; y <= radius; ++y) {
-            for (int x = 0; x <= radius; ++x) {
-                if (x * x + y * y <= radius * radius) {
-                    switch (quadrant) {
-                    case 1: // Верхний левый
-                        setPixel(centerX - x, centerY - y, color);
-                        break;
-                    case 2: // Верхний правый
-                        setPixel(centerX + x, centerY - y, color);
-                        break;
-                    case 3: // Нижний левый
-                        setPixel(centerX - x, centerY + y, color);
-                        break;
-                    case 4: // Нижний правый
-                        setPixel(centerX + x, centerY + y, color);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    void drawButton(int x, int y, int w, int h, int radius, const Color& color) {
-        drawRectangle(x + radius, y, w - 2 * radius, h, color);
-        drawRectangle(x, y + radius, w, h - 2 * radius, color);
-        drawQuarterCircle(x + radius, y + radius, radius, color, 1);
-        drawQuarterCircle(x + w - radius - 1, y + radius, radius, color, 2);
-        drawQuarterCircle(x + radius, y + h - radius - 1, radius, color, 3);
-        drawQuarterCircle(x + w - radius - 1, y + h - radius - 1, radius, color, 4);
-    }
-
-    void drawBorder(int x, int y, int w, int h, int radius, int thickness, const Color& color) {
-        for (int i = 0; i < thickness; ++i) {
-            // Horizontal borders
-            drawRectangle(x + radius, y + i, w - 2 * radius, 1, color); // Top border
-            drawRectangle(x + radius, y + h - i - 1, w - 2 * radius, 1, color); // Bottom border
-
-            // Vertical borders
-            drawRectangle(x + i, y + radius, 1, h - 2 * radius, color); // Left border
-            drawRectangle(x + w - i - 1, y + radius, 1, h - 2 * radius, color); // Right border
-
-            // Corner borders
-            drawQuarterCircle(x + radius, y + radius, radius - i, color, 1); // Top-left corner
-            drawQuarterCircle(x + w - radius - 1, y + radius, radius - i, color, 2); // Top-right corner
-            drawQuarterCircle(x + radius, y + h - radius - 1, radius - i, color, 3); // Bottom-left corner
-            drawQuarterCircle(x + w - radius - 1, y + h - radius - 1, radius - i, color, 4); // Bottom-right corner
         }
     }
 };
 
-Framebuffer fb(800, 600);
-Color orange(255, 165, 0);
-Color green(11, 132, 0);
-Color lightGreen(17, 207, 0);
-Color lightOrange(255, 200, 100);
-Color white(255, 255, 255);
-Color black(0, 0, 0);
-
-BITMAPINFO bitmapInfo;
-bool needsRedraw = true;
-bool isHovered = false;
-
-struct Button {
-    int x, y, width, height, radius;
-    const wchar_t* text;
-    int borderThickness;
-    Color borderColor;
-
-    Button(int x, int y, int w, int h, int r, const wchar_t* t)
-        : x(x), y(y), width(w), height(h), radius(r), text(t), borderThickness(0), borderColor(black) {
+// 🎨 Кнопка
+class Button : public UIElement {
+public:
+    Button(float x, float y, float width, float height, function<void()> onClick)
+        : UIElement(x, y, width, height, onClick) {
     }
 
-    bool isMouseOver(int mouseX, int mouseY) const {
-        return mouseX >= x && mouseX <= x + width &&
-            mouseY >= y && mouseY <= y + height;
-    }
+    void draw() override {
+        // Вершини прямокутника
+        float vertices[] = {
+            x, y,
+            x + width, y,
+            x + width, y + height,
+            x, y + height
+        };
 
-    void setBorder(int thickness, const Color& color) {
-        borderThickness = thickness;
-        borderColor = color;
+        unsigned int VBO, VAO;
+        glGenVertexArrays(1, &VAO);
+        glGenBuffers(1, &VBO);
+
+        glBindVertexArray(VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        glDrawArrays(GL_QUADS, 0, 4);
+
+        glDeleteBuffers(1, &VBO);
+        glDeleteVertexArrays(1, &VAO);
     }
 };
 
-Button button(100, 100, 430, 180, 7, L"Simple Button!");
+// 🖱️ Обробка кліків миші
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+        double mouseX, mouseY;
+        glfwGetCursorPos(window, &mouseX, &mouseY);
 
-void updateFramebuffer() {
-    fb.clear(white);
-    fb.drawButton(button.x, button.y, button.width, button.height, button.radius, isHovered ? lightGreen : green);
-    if (button.borderThickness > 0) {
-        fb.drawBorder(button.x, button.y, button.width, button.height, button.radius, button.borderThickness, button.borderColor);
-    }
-    needsRedraw = true;
-}
+        mouseX = (mouseX / WINDOW_WIDTH) * 2.0f - 1.0f;
+        mouseY = -((mouseY / WINDOW_HEIGHT) * 2.0f - 1.0f);
 
-void setupBitmapInfo(int width, int height) {
-    ZeroMemory(&bitmapInfo, sizeof(BITMAPINFO));
-    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmapInfo.bmiHeader.biWidth = width;
-    bitmapInfo.bmiHeader.biHeight = -height;
-    bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;
-}
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-    case WM_SIZE: {
-        int newWidth = LOWORD(lParam);
-        int newHeight = HIWORD(lParam);
-
-        fb.resize(newWidth, newHeight);
-        setupBitmapInfo(newWidth, newHeight);
-        updateFramebuffer();
-
-        return 0;
-    }
-    case WM_MOUSEMOVE: {
-        int mouseX = LOWORD(lParam);
-        int mouseY = HIWORD(lParam);
-
-        bool hoverState = button.isMouseOver(mouseX, mouseY);
-        if (hoverState != isHovered) {
-            isHovered = hoverState;
-            updateFramebuffer();
-
-            SetCursor(isHovered ? LoadCursor(nullptr, IDC_HAND) : LoadCursor(nullptr, IDC_ARROW));
-
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-
-        return 0;
-    }
-    case WM_PAINT: {
-        if (needsRedraw) {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-
-            StretchDIBits(
-                hdc,
-                0, 0, fb.width, fb.height,
-                0, 0, fb.width, fb.height,
-                fb.buffer.data(),
-                &bitmapInfo,
-                DIB_RGB_COLORS,
-                SRCCOPY
-            );
-
-            HFONT hFont = CreateFont(19, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-                DEFAULT_PITCH | FF_SWISS, L"Arial");
-            HFONT oldFont = (HFONT)SelectObject(hdc, hFont);
-
-            SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, RGB(255, 255, 255));
-            RECT buttonRect = { button.x, button.y, button.x + button.width, button.y + button.height };
-            DrawText(hdc, button.text, -1, &buttonRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            SelectObject(hdc, oldFont);
-            DeleteObject(hFont);
-
-            EndPaint(hwnd, &ps);
-            needsRedraw = false;
-        }
-        return 0;
-    }
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    default:
-        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+        // Обробити натискання мишею на UI-елементах
+        // Для прикладу додамо кнопку
+        static Button button1(-0.5f, -0.5f, 0.3f, 0.2f, []() {
+            cout << "Button Clicked!" << endl;
+            });
+        button1.handleMouseClick(mouseX, mouseY);
     }
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    const wchar_t CLASS_NAME[] = L"BufferedWindowClass";
-
-    WNDCLASS wc = {};
-    wc.lpfnWndProc = WindowProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = CLASS_NAME;
-
-    RegisterClass(&wc);
-
-    HWND hwnd = CreateWindowEx(
-        0,
-        CLASS_NAME,
-        L"Buffered Framebuffer Example",
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        fb.width, fb.height,
-        nullptr, nullptr,
-        hInstance, nullptr
-    );
-
-    if (hwnd == nullptr) {
-        return 0;
+int main() {
+    // Ініціалізація GLFW
+    if (!glfwInit()) {
+        cout << "Error: #1\n";
+        return -1;
     }
 
-    ShowWindow(hwnd, nCmdShow);
-
-    setupBitmapInfo(fb.width, fb.height);
-    updateFramebuffer();
-
-    button.setBorder(1, black);
-
-    MSG msg = {};
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+    // Створення вікна
+    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, nullptr, nullptr);
+    if (!window) {
+        cout << "Error to create Window!\n";
+        glfwTerminate();
+        return -1;
     }
 
+    glfwMakeContextCurrent(window);
+
+    if (glewInit() != GLEW_OK) {
+        cout << "Error GLEW initialization\n";
+        return -1;
+    }
+
+    // Реєстрація callback-функції для обробки кліків мишею
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
+
+    // Створення шейдерної програми
+    unsigned int shaderProgram = createShaderProgram(VertexShaderSource, FragmentShaderSource);
+
+    // Головний цикл
+    while (!glfwWindowShouldClose(window)) {
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(shaderProgram);
+
+        // Малюємо UI-елементи
+        static Button button1(-0.5f, -0.5f, 0.3f, 0.2f, []() {
+            cout << "Button Clicked!" << endl;
+            });
+        button1.draw();
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
     return 0;
 }
